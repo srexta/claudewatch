@@ -11,9 +11,55 @@ A macOS menu bar app that shows what your Claude Code sessions are doing, while 
 
 ClaudeWatch only reads files Claude Code already writes on your Mac. Nothing is uploaded anywhere, except one request to Anthropic to fetch your usage limits.
 
+<p align="center">
+  <a href="https://github.com/srexta/claudewatch/releases/latest/download/ClaudeWatch.dmg">
+    <img src="https://img.shields.io/badge/Download_for_macOS-ClaudeWatch.dmg-E8743B?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS" height="48">
+  </a>
+  <br>
+  <sub>macOS 13+ · Apple Silicon &amp; Intel · <a href="https://github.com/srexta/claudewatch/releases">All releases</a></sub>
+</p>
+
 ---
 
-## Before you start
+## Quick install (download)
+
+The easiest way. No Terminal needed.
+
+1. Click **Download for macOS** above. `ClaudeWatch.dmg` downloads.
+2. Open `ClaudeWatch.dmg` from your Downloads folder. A window opens.
+3. Drag **ClaudeWatch** onto the **Applications** folder in that window.
+4. Open **ClaudeWatch** from Applications (or ⌘Space → "ClaudeWatch").
+5. macOS will say *"ClaudeWatch" Not Opened: Apple could not verify…*. This is expected: the app isn't signed with a paid Apple developer certificate yet. Click **Done**, then:
+   - Open **System Settings → Privacy & Security**
+   - Scroll down to the message about ClaudeWatch and click **Open Anyway**
+   - Enter your Mac password if asked, then click **Open Anyway** again
+
+   You only do this once.
+6. Look for the **✳︎** in your menu bar (top-right of the screen) and click it.
+
+Then continue with [First run: three permission pop-ups](#first-run-three-permission-pop-ups).
+
+<details>
+<summary>Prefer Terminal? Remove the download warning with one command</summary>
+
+After dragging the app to Applications:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ClaudeWatch.app && open /Applications/ClaudeWatch.app
+```
+
+This clears the "downloaded from the internet" flag macOS puts on the app.
+</details>
+
+To update, download the latest `.dmg` and drag it to Applications again, choosing **Replace**.
+
+---
+
+## Build from source
+
+Use this if you want to build the app yourself or change the code.
+
+### Before you start
 
 You need:
 
@@ -35,9 +81,9 @@ To see your usage limits, you must be logged in to Claude Code with a **claude.a
 
 ---
 
-## Install, step by step
+### Install, step by step
 
-### Step 1: Open Terminal
+#### Step 1: Open Terminal
 
 Terminal is the Mac app where you type commands.
 
@@ -46,7 +92,7 @@ Terminal is the Mac app where you type commands.
 
 A window with a blinking cursor opens. Paste each command below into this window and press **Enter** after each one.
 
-### Step 2: Check your Mac is ready
+#### Step 2: Check your Mac is ready
 
 ```sh
 sw_vers -productVersion
@@ -63,7 +109,7 @@ swiftc --version
 ```
 You should see a line starting with `Apple Swift version`. If you see `command not found`, run `xcode-select --install`, click **Install** in the window that appears, wait for it to finish, then run `swiftc --version` again.
 
-### Step 3: Download the code
+#### Step 3: Download the code
 
 ```sh
 git clone https://github.com/srexta/claudewatch.git ~/ClaudeWatch
@@ -72,14 +118,14 @@ This copies the project into a folder called `ClaudeWatch` in your home folder. 
 
 If you get an error saying `git` is not found, the command from Step 2 (`xcode-select --install`) installs it too.
 
-### Step 4: Go into the folder
+#### Step 4: Go into the folder
 
 ```sh
 cd ~/ClaudeWatch
 ```
 This moves Terminal into the project folder. Nothing is printed; that's normal.
 
-### Step 5: Build and install the app
+#### Step 5: Build and install the app
 
 ```sh
 ./build.sh
@@ -97,13 +143,13 @@ Built /Users/<you>/ClaudeWatch/ClaudeWatch.app
 Installed /Applications/ClaudeWatch.app
 ```
 
-### Step 6: Find it in the menu bar
+#### Step 6: Find it in the menu bar
 
 Look at the **top-right of your screen**, near the clock and Wi-Fi icons. You should see a **✳︎** icon, and next to it a small bar labeled **Session**.
 
 Click the ✳︎ to open the panel.
 
-### Step 7: Check it's working
+#### Step 7: Check it's working
 
 In the panel you should see:
 - a green dot with **All Systems Operational** at the top
@@ -140,7 +186,7 @@ You can also open ClaudeWatch from Spotlight (⌘Space → "ClaudeWatch"), Launc
 
 ---
 
-## Update to a new version
+## Update to a new version (source install)
 
 ```sh
 cd ~/ClaudeWatch
@@ -196,6 +242,7 @@ Check the log at `~/Library/Logs/ClaudeWatch.log`. It records what the app tried
 
 - `./check.sh` runs the formatter check and a self-test of the session-log reader
 - `./build.sh` builds and installs the app
+- `./release.sh 1.2.0` checks, builds a universal `.dmg`, tags `v1.2.0` and publishes a GitHub release (the Download button always points at the latest release)
 - Code style is enforced by `swift format` (config in `.swift-format`)
 - `CLAUDE.md` has project notes for Claude Code; `/verify` runs the full check-build-run loop
 

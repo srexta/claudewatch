@@ -4,7 +4,8 @@ macOS menu bar app (SwiftUI `MenuBarExtra`) that shows live Claude Code sessions
 
 ## Commands
 
-- `./build.sh` — compile with `swiftc`, install to `/Applications/ClaudeWatch.app`, relaunch
+- `./build.sh` — compile with `swiftc`, ad-hoc sign, install to `/Applications/ClaudeWatch.app`, relaunch (`VERSION=`, `UNIVERSAL=1`, `INSTALL=0` env vars)
+- `./release.sh <version>` — check, universal build, `dist/ClaudeWatch.dmg`, tag `v<version>`, `gh release create`. Needs a clean tree; app is ad-hoc signed only (no Developer ID), so users get a one-time Gatekeeper "Open Anyway"
 - `./check.sh` — `swift format lint --strict` + parser self-check against `Tests/fixture.jsonl`
 - `swift format -i ClaudeWatch.swift Tests/ParserCheck.swift` — auto-format
 
