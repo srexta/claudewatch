@@ -192,6 +192,15 @@ Check the log at `~/Library/Logs/ClaudeWatch.log`. It records what the app tried
 
 ---
 
+## For contributors
+
+- `./check.sh` runs the formatter check and a self-test of the session-log reader
+- `./build.sh` builds and installs the app
+- Code style is enforced by `swift format` (config in `.swift-format`)
+- `CLAUDE.md` has project notes for Claude Code; `/verify` runs the full check-build-run loop
+
+---
+
 ## How it works
 
 | Information | Where it comes from |

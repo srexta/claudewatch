@@ -1,8 +1,11 @@
-import SwiftUI
-import ServiceManagement
 import Security
+import ServiceManagement
+import SwiftUI
 
-struct Step: Identifiable { let id: String; let tool: String; let text: String; let path: String?; let start: Date?; var done: Bool; var msgId = ""; var tokens = 0; var end: Date? = nil }
+struct Step: Identifiable {
+    let id: String; let tool: String; let text: String; let path: String?; let start: Date?; var done: Bool; var msgId = ""; var tokens = 0;
+    var end: Date? = nil
+}
 struct TaskItem { let subject: String; let status: String }
 
 // Everything we pull out of one transcript (main session or helper agent)
@@ -19,8 +22,8 @@ struct Agent: Identifiable { let id: String; let name: String; let finished: Boo
 struct Session: Identifiable {
     let id: String, sessionId: String, modified: Date, log: Log, tasks: [TaskItem], agents: [Agent]
     var output: [String] = []
-    var expectedTurn: (TimeInterval, Int)? = nil   // typical prompt time, number of past prompts it is based on
-    var expectedStep: (TimeInterval, Int)? = nil   // typical time of the running command
+    var expectedTurn: (TimeInterval, Int)? = nil  // typical prompt time, number of past prompts it is based on
+    var expectedStep: (TimeInterval, Int)? = nil  // typical time of the running command
     var project: String { log.cwd.map { ($0 as NSString).lastPathComponent } ?? "?" }
     var title: String { log.title.isEmpty ? log.prompt : log.title }
     var working: Bool { agents.contains { !$0.finished } || (!log.finished && Date().timeIntervalSince(modified) < 300) }
@@ -31,12 +34,15 @@ struct Session: Identifiable {
     }
     var currentTask: String? { tasks.first { $0.status == "in_progress" }?.subject }
     func matches(_ q: String) -> Bool {
-        q.isEmpty || ([project, title, log.prompt] + log.steps.map(\.text) + agents.map(\.name))
-            .contains { $0.localizedCaseInsensitiveContains(q) }
+        q.isEmpty
+            || ([project, title, log.prompt] + log.steps.map(\.text) + agents.map(\.name))
+                .contains { $0.localizedCaseInsensitiveContains(q) }
     }
 }
 
-let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+let iso: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+}()
 let fm = FileManager.default
 let home = fm.homeDirectoryForCurrentUser
 
@@ -53,7 +59,8 @@ func describe(_ tool: String, _ input: [String: Any]) -> (String, String?) {
         let parts = s("command").components(separatedBy: CharacterSet(charactersIn: ";&|\n"))
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { p in !p.isEmpty && !["source ", "nvm ", "cd ", "export ", ". "].contains { p.hasPrefix($0) } }
-        let cmd = (parts.first ?? s("command")).split(separator: " ").map { $0.hasPrefix("/") ? name(String($0)) : String($0) }.joined(separator: " ")
+        let cmd = (parts.first ?? s("command")).split(separator: " ").map { $0.hasPrefix("/") ? name(String($0)) : String($0) }.joined(
+            separator: " ")
         return ("Running \(cmd)", nil)
     case "Read": return ("Reading", s("file_path"))
     case "Edit", "MultiEdit": return ("Editing", s("file_path"))
@@ -68,15 +75,39 @@ func describe(_ tool: String, _ input: [String: Any]) -> (String, String?) {
     }
 }
 
-func parse(_ url: URL) -> Log {
-    var log = Log(), msgTokens: [String: Int] = [:], stepIds = Set<String>()
-    // ponytail: whole-file parse, cached per mtime in Store; fine up to tens of MB
-    let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-    for line in text.split(separator: "\n") {
-        guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+// Reads a transcript incrementally: remembers how far it got and only parses lines appended since
+final class Parser {
+    var log = Log(), date: Date?
+    private var offset: UInt64 = 0, msgTokens: [String: Int] = [:], stepIndex: [String: Int] = [:]
+
+    func advance(_ url: URL) {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? h.close() }
+        let size = (try? h.seekToEnd()) ?? 0
+        if size < offset { log = Log(); offset = 0; msgTokens = [:]; stepIndex = [:] }  // file was rewritten
+        try? h.seek(toOffset: offset)
+        let data = h.readDataToEndOfFile()
+        guard let lastNL = data.lastIndex(of: 0x0A) else { return }  // wait until a line is complete
+        for line in data[data.startIndex...lastNL].split(separator: 0x0A) { consume(Data(line)) }
+        offset += UInt64(lastNL - data.startIndex + 1)
+        // ponytail: a reply that made several tool calls credits its tokens to the first one
+        var credited = Set<String>()
+        for i in log.steps.indices {
+            log.steps[i].tokens = credited.insert(log.steps[i].msgId).inserted ? msgTokens[log.steps[i].msgId] ?? 0 : 0
+        }
+        log.out = msgTokens.values.reduce(0, +)
+    }
+
+    private func newPrompt(_ t: String, _ ts: Date?) {
+        guard !t.hasPrefix("<") else { return }
+        log.prompt = t; log.turns += 1; log.lastStop = ""; log.turnStart = ts; log.turnCounted = false
+    }
+
+    private func consume(_ line: Data) {
+        guard let obj = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return }
         if let t = obj["aiTitle"] as? String { log.title = t }
         if let c = obj["cwd"] as? String { log.cwd = c }
-        guard let msg = obj["message"] as? [String: Any] else { continue }
+        guard let msg = obj["message"] as? [String: Any] else { return }
         let ts = (obj["timestamp"] as? String).flatMap { iso.date(from: $0) }
         if let ts { log.first = log.first ?? ts; log.last = ts }
         let msgId = msg["id"] as? String ?? ""
@@ -89,34 +120,26 @@ func parse(_ url: URL) -> Log {
                 log.turnDurations.append(ts.timeIntervalSince(start)); log.turnCounted = true
             }
         }
-        let newPrompt = { (t: String) in
-            guard !t.hasPrefix("<") else { return }
-            log.prompt = t; log.turns += 1; log.lastStop = ""; log.turnStart = ts; log.turnCounted = false
-        }
-        if let t = msg["content"] as? String { newPrompt(t); continue }
+        if let t = msg["content"] as? String { return newPrompt(t, ts) }
         for item in msg["content"] as? [[String: Any]] ?? [] {
             switch item["type"] as? String {
             case "tool_use":
-                guard let id = item["id"] as? String, stepIds.insert(id).inserted else { continue }
+                guard let id = item["id"] as? String, stepIndex[id] == nil else { continue }
                 let tool = item["name"] as? String ?? "?", input = item["input"] as? [String: Any] ?? [:]
                 if tool == "TodoWrite", let todos = input["todos"] as? [[String: Any]] {
                     log.todos = todos.map { TaskItem(subject: $0["content"] as? String ?? "", status: $0["status"] as? String ?? "") }
                 }
                 let (text, path) = describe(tool, input)
+                stepIndex[id] = log.steps.count
                 log.steps.append(Step(id: id, tool: tool, text: text, path: path, start: ts, done: false, msgId: msgId))
             case "tool_result":
-                if let i = log.steps.firstIndex(where: { $0.id == item["tool_use_id"] as? String }) { log.steps[i].done = true; log.steps[i].end = ts }
+                if let id = item["tool_use_id"] as? String, let i = stepIndex[id] { log.steps[i].done = true; log.steps[i].end = ts }
             case "text" where obj["type"] as? String == "user":
-                newPrompt(item["text"] as? String ?? "")
+                newPrompt(item["text"] as? String ?? "", ts)
             default: break
             }
         }
     }
-    // ponytail: a reply that made several tool calls credits its tokens to the first one
-    var credited = Set<String>()
-    for i in log.steps.indices where credited.insert(log.steps[i].msgId).inserted { log.steps[i].tokens = msgTokens[log.steps[i].msgId] ?? 0 }
-    log.out = msgTokens.values.reduce(0, +)
-    return log
 }
 
 func taskList(_ sessionId: String) -> [TaskItem] {
@@ -125,7 +148,9 @@ func taskList(_ sessionId: String) -> [TaskItem] {
         .filter { $0.pathExtension == "json" }
         .sorted { (Int($0.deletingPathExtension().lastPathComponent) ?? 0) < (Int($1.deletingPathExtension().lastPathComponent) ?? 0) }
         .compactMap { u in
-            guard let d = try? Data(contentsOf: u), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+            guard let d = try? Data(contentsOf: u), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else {
+                return nil
+            }
             return TaskItem(subject: o["subject"] as? String ?? "", status: o["status"] as? String ?? "")
         }
 }
@@ -157,14 +182,28 @@ func notify(_ title: String, _ body: String) {
 
 // MARK: - Plan usage limits + service status
 
-struct Limit: Identifiable { let id: String; let title: String; let badge: String?; let subtitle: String?; let pct: Double; let resets: Date?; let window: TimeInterval }
+struct Limit: Identifiable {
+    let id: String; let title: String; let badge: String?; let subtitle: String?; let pct: Double; let resets: Date?;
+    let window: TimeInterval
+}
 
 // The app (not anyone else) reads Claude Code's login from the Keychain; macOS asks the user once
+let logURL = home.appendingPathComponent("Library/Logs/ClaudeWatch.log")
+
 func debugLog(_ msg: String) {
-    let url = home.appendingPathComponent("Library/Logs/ClaudeWatch.log")
+    let url = logURL
     let line = "\(Date()) \(msg)\n"
-    if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
-    else { try? line.write(to: url, atomically: true, encoding: .utf8) }
+    // keep the log small: once it passes 1 MB, keep only the newest ~200 KB
+    if let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 1_000_000,
+        let d = try? Data(contentsOf: url)
+    {
+        try? d.suffix(200_000).write(to: url)
+    }
+    if let h = try? FileHandle(forWritingTo: url) {
+        h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+    } else {
+        try? line.write(to: url, atomically: true, encoding: .utf8)
+    }
 }
 
 func readToken() -> String? {
@@ -180,7 +219,10 @@ func readToken() -> String? {
         let d = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         if p.terminationStatus == 0, let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
-           let token = (o["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String { return token }
+            let token = (o["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String
+        {
+            return token
+        }
     }
     debugLog("no claudeAiOauth token found in Keychain")
     return nil
@@ -195,7 +237,11 @@ func parseDate(_ s: Any?) -> Date? {
 func getJSON(_ req: URLRequest, _ done: @escaping ([String: Any]?, String?) -> Void) {
     URLSession.shared.dataTask(with: req) { data, resp, err in
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        debugLog("GET \(req.url?.host ?? "") -> \(code) \(err?.localizedDescription ?? "") \(String(decoding: (data ?? Data()).prefix(400), as: UTF8.self))")
+        if code != 200 {
+            debugLog(
+                "GET \(req.url?.host ?? "") failed: \(code) \(err?.localizedDescription ?? "") \(String(decoding: (data ?? Data()).prefix(300), as: UTF8.self))"
+            )
+        }
         guard let data, code == 200, let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return done(nil, err?.localizedDescription ?? "HTTP \(code)")
         }
@@ -236,7 +282,8 @@ final class Store: ObservableObject {
                 ]
                 let limits = specs.compactMap { key, title, badge, sub, window -> Limit? in
                     guard let v = o?[key] as? [String: Any], let pct = (v["utilization"] as? NSNumber)?.doubleValue else { return nil }
-                    return Limit(id: key, title: title, badge: badge, subtitle: sub, pct: pct, resets: parseDate(v["resets_at"]), window: window)
+                    return Limit(
+                        id: key, title: title, badge: badge, subtitle: sub, pct: pct, resets: parseDate(v["resets_at"]), window: window)
                 }
                 DispatchQueue.main.async {
                     self.limits = limits
@@ -245,7 +292,8 @@ final class Store: ObservableObject {
             }
         }
     }
-    private var cache: [String: (Date, Log)] = [:]
+    private var cache: [String: Parser] = [:]
+    private var touched = Set<String>()  // files used this refresh; everything else is dropped from the cache
     private var wasFinished: [String: Bool] = [:]
     private var stuckNotified = Set<String>()
     private let queue = DispatchQueue(label: "store")
@@ -258,10 +306,18 @@ final class Store: ObservableObject {
     }
 
     private func cachedLog(_ url: URL, _ date: Date) -> Log {
-        if let (d, l) = cache[url.path], d == date { return l }
-        let l = parse(url)
-        cache[url.path] = (date, l)
-        return l
+        let p = cache[url.path] ?? Parser()
+        if p.date != date { p.advance(url); p.date = date }
+        cache[url.path] = p
+        touched.insert(url.path)
+        return p.log
+    }
+
+    func clearCache() {
+        queue.async {
+            self.cache.removeAll(); self.wasFinished.removeAll(); self.stuckNotified.removeAll()
+        }
+        load()
     }
 
     private func agents(_ sessionDir: URL) -> [Agent] {
@@ -271,9 +327,11 @@ final class Store: ObservableObject {
             .compactMap { meta in
                 let jsonl = URL(fileURLWithPath: meta.path.replacingOccurrences(of: ".meta.json", with: ".jsonl"))
                 guard let d = try? Data(contentsOf: meta), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
-                      let date = mtime(jsonl) else { return nil }
-                return Agent(id: jsonl.path, name: o["description"] as? String ?? o["agentType"] as? String ?? "Agent",
-                             finished: o["finished"] as? Bool ?? false, log: cachedLog(jsonl, date))
+                    let date = mtime(jsonl)
+                else { return nil }
+                return Agent(
+                    id: jsonl.path, name: o["description"] as? String ?? o["agentType"] as? String ?? "Agent",
+                    finished: o["finished"] as? Bool ?? false, log: cachedLog(jsonl, date))
             }
             .sorted { ($0.log.first ?? .distantPast) < ($1.log.first ?? .distantPast) }
     }
@@ -281,6 +339,7 @@ final class Store: ObservableObject {
     func load() {
         let stuckMinutes = max(1, UserDefaults.standard.object(forKey: "stuckMinutes") as? Int ?? 10)
         queue.async {
+            self.touched.removeAll()
             let root = home.appendingPathComponent(".claude/projects")
             let dirs = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
             var found: [(URL, Date)] = []
@@ -307,8 +366,9 @@ final class Store: ObservableObject {
                 let sid = url.deletingPathExtension().lastPathComponent
                 let log = self.cachedLog(url, date)
                 let tasks = taskList(sid)
-                var s = Session(id: url.path, sessionId: sid, modified: date, log: log,
-                                tasks: tasks.isEmpty ? log.todos : tasks, agents: self.agents(url.deletingPathExtension()))
+                var s = Session(
+                    id: url.path, sessionId: sid, modified: date, log: log,
+                    tasks: tasks.isEmpty ? log.todos : tasks, agents: self.agents(url.deletingPathExtension()))
                 let projectTurns = turnsByProject[log.cwd ?? ""] ?? []
                 let samples = projectTurns.count >= 3 ? projectTurns : allTurns
                 if samples.count >= 3 { s.expectedTurn = (median(samples), samples.count) }
@@ -318,18 +378,24 @@ final class Store: ObservableObject {
                 if self.wasFinished[s.id] == false && log.finished { notify("✅ Done: \(s.title)", s.project) }
                 self.wasFinished[s.id] = log.finished
                 if let r = log.running, let start = r.start, Date().timeIntervalSince(start) > Double(stuckMinutes * 60),
-                   self.stuckNotified.insert(r.id).inserted {
+                    self.stuckNotified.insert(r.id).inserted
+                {
                     notify("⏳ Running \(stuckMinutes)+ min: \(s.title)", r.text + (r.path.map { " " + name($0) } ?? ""))
                 }
                 result.append(s)
             }
+            self.cache = self.cache.filter { self.touched.contains($0.key) }
+            self.wasFinished = self.wasFinished.filter { self.touched.contains($0.key) }
+            self.stuckNotified.formIntersection(result.compactMap { $0.log.running?.id })
             DispatchQueue.main.async { self.sessions = result }
         }
     }
 }
 
 // ponytail: median of past runs is a rough guess; prompts vary a lot, so the UI labels it as an estimate
-func median(_ xs: [TimeInterval]) -> TimeInterval { let s = xs.sorted(); return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2 }
+func median(_ xs: [TimeInterval]) -> TimeInterval {
+    let s = xs.sorted(); return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
+}
 
 func duration(_ from: Date?, _ to: Date? = nil) -> String {
     guard let from else { return "" }
@@ -377,9 +443,12 @@ struct TimeEstimate: View {
                 ProgressView(value: Double(pct), total: 100).tint(over ? .orange : .blue)
                 Text(over ? "over" : "~\(pct)%").font(.caption.monospacedDigit()).bold()
             }
-            Text(over ? "Estimated time to finish: overdue · usually \(fmt(typical)), running \(fmt(elapsed))"
-                      : "Estimated time to finish: \(fmt(typical - elapsed)) · usually takes \(fmt(typical)) (from \(basis))")
-                .font(.caption2).foregroundStyle(over ? .orange : .secondary)
+            Text(
+                over
+                    ? "Estimated time to finish: overdue · usually \(fmt(typical)), running \(fmt(elapsed))"
+                    : "Estimated time to finish: \(fmt(typical - elapsed)) · usually takes \(fmt(typical)) (from \(basis))"
+            )
+            .font(.caption2).foregroundStyle(over ? .orange : .secondary)
         }
     }
 }
@@ -544,7 +613,11 @@ struct UsageHeader: View {
                 Circle().fill(store.statusOK ? .green : .orange).frame(width: 8, height: 8)
                 Text(store.status).font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()
-                Button { store.loadUsage() } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless)
+                Button {
+                    store.loadUsage()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }.buttonStyle(.borderless)
             }
             if let e = store.usageError { Text(e).font(.caption).foregroundStyle(.orange) }
             HStack(spacing: 8) { ForEach(store.limits.prefix(2)) { LimitCard(l: $0) } }
@@ -587,6 +660,18 @@ struct Panel: View {
     @State private var query = ""
     @AppStorage("stuckMinutes") private var stuckMinutes = 10
     @State private var atLogin = SMAppService.mainApp.status == .enabled
+    @State private var showSettings = false
+    @State private var notice: String?
+
+    func flash(_ msg: String) {
+        notice = msg
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { notice = nil }
+    }
+
+    func logSize() -> String {
+        let n = (try? fm.attributesOfItem(atPath: logURL.path))?[.size] as? Int ?? 0
+        return ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
+    }
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -597,13 +682,28 @@ struct Panel: View {
                 VStack(spacing: 8) { ForEach(store.sessions.filter { $0.matches(query) }) { SessionCard(s: $0) } }
             }
             Divider()
-            Stepper("Alert if a command runs over \(stuckMinutes) min", value: $stuckMinutes, in: 1...120).font(.caption)
-            HStack {
-                Toggle("Start at login", isOn: $atLogin).font(.caption)
-                    .onChange(of: atLogin) { on in
-                        try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
-                        atLogin = SMAppService.mainApp.status == .enabled
+            DisclosureGroup("Settings", isExpanded: $showSettings) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Stepper("Alert if a command runs over \(stuckMinutes) min", value: $stuckMinutes, in: 1...120)
+                    Toggle("Start at login", isOn: $atLogin)
+                        .onChange(of: atLogin) { on in
+                            try? on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
+                            atLogin = SMAppService.mainApp.status == .enabled
+                        }
+                    HStack {
+                        Button("Clear cache") {
+                            store.clearCache(); flash("Cache cleared, reloading…")
+                        }
+                        .help("Forget everything the app has read and reload from scratch")
+                        Button("Clear logs") {
+                            try? fm.removeItem(at: logURL); flash("Logs cleared")
+                        }
+                        Button("Open log") { NSWorkspace.shared.open(logURL) }.disabled(!fm.fileExists(atPath: logURL.path))
                     }
+                    Text(notice ?? "Log: \(logSize())").foregroundStyle(.secondary)
+                }.font(.caption).padding(.top, 4)
+            }.font(.caption)
+            HStack {
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }
@@ -620,8 +720,10 @@ struct ClaudeWatchApp: App {
             Panel(store: store)
         } label: {
             let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let r = ImageRenderer(content: MenuBarLabel(active: store.sessions.filter(\.working).count,
-                                                        session: store.limits.first { $0.id == "five_hour" }, dark: dark))
+            let r = ImageRenderer(
+                content: MenuBarLabel(
+                    active: store.sessions.filter(\.working).count,
+                    session: store.limits.first { $0.id == "five_hour" }, dark: dark))
             let _ = (r.scale = NSScreen.main?.backingScaleFactor ?? 2)
             if let img = r.nsImage { Image(nsImage: img) } else { Text("✳︎") }
         }

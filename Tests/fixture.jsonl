@@ -1,0 +1,10 @@
+{"type":"ai-title","aiTitle":"Fix flaky tests","sessionId":"s1"}
+{"type":"user","cwd":"/Users/demo/app","timestamp":"2026-10-30T10:00:00.000Z","message":{"role":"user","content":"make the tests pass"}}
+{"type":"assistant","cwd":"/Users/demo/app","timestamp":"2026-10-30T10:00:05.000Z","message":{"id":"m1","role":"assistant","usage":{"output_tokens":10},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"source ~/.nvm/nvm.sh; cd /Users/demo/app && pnpm test"}}]}}
+{"type":"assistant","cwd":"/Users/demo/app","timestamp":"2026-10-30T10:00:05.500Z","message":{"id":"m1","role":"assistant","stop_reason":"tool_use","usage":{"output_tokens":120},"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"source ~/.nvm/nvm.sh; cd /Users/demo/app && pnpm test"}}]}}
+{"type":"user","timestamp":"2026-10-30T10:02:05.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"assistant","timestamp":"2026-10-30T10:02:10.000Z","message":{"id":"m2","role":"assistant","usage":{"output_tokens":40},"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/Users/demo/app/src/a.ts"}}]}}
+{"type":"user","timestamp":"2026-10-30T10:02:12.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}
+{"type":"assistant","timestamp":"2026-10-30T10:03:00.000Z","message":{"id":"m3","role":"assistant","stop_reason":"end_turn","usage":{"output_tokens":30},"content":[{"type":"text","text":"Done."}]}}
+{"type":"user","timestamp":"2026-10-30T10:05:00.000Z","message":{"role":"user","content":[{"type":"text","text":"now add a changelog"}]}}
+{"type":"assistant","timestamp":"2026-10-30T10:05:03.000Z","message":{"id":"m4","role":"assistant","usage":{"output_tokens":5},"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/Users/demo/app/CHANGELOG.md"}}]}}
